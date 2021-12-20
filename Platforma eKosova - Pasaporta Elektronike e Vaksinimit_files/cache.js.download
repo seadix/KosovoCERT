@@ -1,0 +1,106 @@
+﻿function checkCache(e, a = false) {
+	if (window.localStorage.getItem(`${e}Cache`) === null)
+		loadCache(e, a);
+	else {
+		var dateTime = JSON.parse(window.localStorage.getItem(`${e}Cache`)).DateTime;
+		if (serverSideCheck(e, dateTime) || Math.floor((Date.now() - dateTime) / (24 * 60 * 60 * 1000)) > 1)
+			loadCache(e, a);
+	}
+}
+
+function checkCacheAsync(e, a = false, callback = null) {
+	if (window.localStorage.getItem(`${e}Cache`) === null)
+		loadCacheAsync(e, a, callback);
+	else {
+		var dateTime = JSON.parse(window.localStorage.getItem(`${e}Cache`)).DateTime;
+		Date.parse(GetAsyncWithOutLoader(`/${e}/TimeStamp`, result => {
+			if (result.responseText.replace(/"/g, "") > dateTime || Math.floor((Date.now() - dateTime) / (24 * 60 * 60 * 1000)) > 1)
+				loadCacheAsync(e, a, callback);
+			else
+				callback();
+		}));
+	}
+}
+
+function loadCache(e, priority) {
+	var data = GetSyncWithOutLoader(`/${e}/Data`).responseText;
+	if (priority)
+		data = JSON.stringify(sortResults(JSON.parse(data), 'priority', 'true'));
+
+	if (data != "")
+		window.localStorage.setItem(`${e}Cache`,
+			JSON.stringify({
+				Data: data,
+				DateTime: Date.now()
+			}));
+}
+
+loadCacheAsync = (e, priority, callback) =>
+	GetAsyncWithOutLoader(`/${e}/Data`, result => {
+		data = result.responseText;
+		if (priority)
+			data = JSON.stringify(sortResults(JSON.parse(data), 'priority', 'true'));
+
+		if (data != "")
+			window.localStorage.setItem(`${e}Cache`,
+				JSON.stringify({
+					Data: data,
+					DateTime: Date.now()
+				}));
+
+		if (callback != null)
+			callback();
+	});
+
+function GetSyncWithOutLoader(URL) {
+	return $.ajax({
+		url: URL,
+		type: "GET",
+		cache: false,
+		async: false
+	});
+}
+
+function GetAsyncWithOutLoader(URL, exec) {
+	return $.ajax({
+		url: URL,
+		type: "GET",
+		cache: false,
+		complete: result => exec(result)
+	});
+}
+
+serverSideCheck = (e, dateTime) => Date.parse(GetSyncWithOutLoader(`/${e}/TimeStamp`).responseText.replace(/"/g, "")) > dateTime;
+
+function sortResults(toSort, prop, asc) {
+	sorted = toSort.sort((a, b) => {
+		if (asc)
+			return a[prop] > b[prop] ? 1 : a[prop] < b[prop] ? -1 : 0;
+		return b[prop] > a[prop] ? 1 : b[prop] < a[prop] ? -1 : 0;
+	});
+	return sorted;
+}
+
+var xScriptComm = new BroadcastChannel('interScriptCommunication');
+
+xScriptComm.onmessage = event => {
+	if (event.data.key === 'Services')
+		checkCacheAsync('Services', true, () => {
+			let serviceCategories = JSON.parse(JSON.parse(window.localStorage.getItem('ServicesCache')).Data).filter(_ => _.isActive === true && _.activeSubs > 0);
+
+			for (let i = 0; i < serviceCategories.length; i++) {
+				let sId = serviceCategories[i].id;
+				if (typeof arrLang[lang][`SERVICE-${sId}`] !== 'undefined' && searchItems.filter(_ => _.ID === sId).length === 0)
+					addSearchItem(`SERVICE-${sId}`, `/Service/${sId}`, null, null, sId)
+
+				checkCacheAsync(`Service/${sId}`, true, () => {
+					var subservices = JSON.parse(JSON.parse(window.localStorage.getItem(`Service/${sId}Cache`)).Data);
+					for (let j = 0; j < subservices.length; j++) {
+						let ssId = subservices[j].id;
+						if (typeof arrLang[lang][`SUBSERVICE-${ssId}`] !== 'undefined' && searchItems.filter(_ => _.Description === arrLang[lang][`SUBSERVICE-${ssId}`]).length === 0)
+							addSearchItem(`SUBSERVICE-${ssId}`, `/SubService/${ssId}`, null, sId)
+					}
+				});
+			}
+		});
+}
